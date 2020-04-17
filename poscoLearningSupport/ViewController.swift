@@ -15,10 +15,13 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
 
     @IBOutlet var webView: WKWebView!
     
+    let AppVersion = "001.004"
     var locationManager: CLLocationManager = CLLocationManager()
     var beaconData:Array<Dictionary<String, Any>>=[]
     var beaconCheckedMajorMinor: String = ""
     var gpsResultStr: String = ""
+    var beaconCheckTryCount : Int = 1
+    
     
     override var preferredStatusBarStyle: UIStatusBarStyle {
         return .lightContent
@@ -48,7 +51,7 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
         super.viewDidLoad()
         
         // Do any additional setup after loading the view.
-        let url = URL(string: "http://app.poscohrd.com:8000")
+        let url = URL(string: "http://app.poscohrd.com:8000/?ca=main&from=iOSAppVersion_"+AppVersion)
         let request = URLRequest(url: url!)
         
         webView.load(request)
@@ -61,7 +64,6 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
 
     //status bar 배경색 바꾸기
     override func viewDidAppear(_ animated: Bool) {
-        
         if #available(iOS 13, *)
         {
             let statusBar = UIView(frame: (UIApplication.shared.keyWindow?.windowScene?.statusBarManager?.statusBarFrame)!)
@@ -76,14 +78,15 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
     
     /******************블루투스 관련 메쏘드*******************/
     func startScanning() {
-        print("비콘탐색 시작")
-        print("GPS탐색 시작")
+        print(String(beaconCheckTryCount)+"번째 비콘탐색 - 시작")
+        print(String(beaconCheckTryCount)+"번째 GPS탐색 - 시작")
         
+        //GPS 정확도 설정
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         //위치 업데이트
         locationManager.startUpdatingLocation()
 
-        //print(beaconArrStr)
+        //printbeaconData)
         for beaconInfo in self.beaconData {
             print("검색하려는 대상 비콘의 정보 : \(beaconInfo)")
             var thisUuid:UUID!
@@ -110,11 +113,12 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
                 locationManager.startRangingBeacons(in: beaconRegion)
             }
         }
+        beaconCheckTryCount += 1
         self.stopScanning()
     }
     
     func stopScanning() {
-        let when = DispatchTime.now() + 10 // change 10 to desired number of seconds
+        let when = DispatchTime.now() + 3 // change 10 to desired number of seconds
         DispatchQueue.main.asyncAfter(deadline: when) {
             for beaconInfo in self.beaconData {
                 var thisUuid:UUID!
@@ -141,10 +145,15 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
                     self.locationManager.stopRangingBeacons(in: beaconRegion)
                 }
             }
-            print("비콘탐색 종료")
-            print("GPS탐색 종료")
+            print(String(self.beaconCheckTryCount-1)+"번째 비콘탐색 - 종료")
+            print(String(self.beaconCheckTryCount-1)+"번째 GPS탐색 - 종료")
             self.locationManager.stopUpdatingLocation()
-            self.chulCheck()
+            if self.beaconCheckTryCount<4 {
+                self.startScanning()
+            } else {
+                self.beaconCheckTryCount = 0
+                self.chulCheck()
+            }
         }
     }
     
@@ -165,17 +174,11 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
     @available(iOS 13, *)
     func locationManager(_ manager: CLLocationManager, didRange beacons: [CLBeacon], satisfying beaconConstraint: CLBeaconIdentityConstraint) {
         if beacons.count > 0 {
-            print("감지된 비콘 정보 : \(beacons)")
+            print("감지된 비콘 정보(iOS 13) : \(beacons)")
             self.beaconCheckedMajorMinor=beacons[0].major.stringValue+"_"+beacons[0].minor.stringValue
         } else {
-            print("감지된 비콘 정보 : 감지되지 않음!")
+            print("감지된 비콘 정보(iOS 13) : 감지되지 않음!")
         }
-    }
-    
-    //비콘 감지 실패하면...
-    @available(iOS 13, *)
-    func locationManager(_ manager: CLLocationManager, didFailRangingFor: CLBeaconIdentityConstraint, error: Error) {
-        print("에러")
     }
     
     func locationManager(_ manager: CLLocationManager, didRangeBeacons beacons: [CLBeacon], in region: CLBeaconRegion) {
@@ -187,6 +190,12 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
         }
     }
     
+    //비콘 감지 실패하면...
+    @available(iOS 13, *)
+    func locationManager(_ manager: CLLocationManager, didFailRangingFor: CLBeaconIdentityConstraint, error: Error) {
+        print("비콘감지 에러")
+    }
+        
     func chulCheck() {
         let c=getCookieInfo(cookieName: "c")
         let i=getCookieInfo(cookieName: "i")
@@ -254,26 +263,30 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
             }
         } else {
             //출석체크 메뉴로 들어갔을 때
-            if (schemeStr?.absoluteString == "http://app.poscohrd.com:8000/?ca=chul&chulSign=1#chulStart") {
-               locationManager = CLLocationManager()
-               locationManager.delegate = self
-               locationManager.requestWhenInUseAuthorization() //권한 요청
-                               
-               print("checking...")
+            if (schemeStr?.absoluteString == "http://app.poscohrd.com:8000/?ca=chul&chulSign=1") {
+                let status = CLLocationManager.authorizationStatus()
+                if status == CLAuthorizationStatus.denied  || status == CLAuthorizationStatus.restricted {
+                    let alert = UIAlertController(title: "출석불가", message: "위치권한을 허용하지 않아 출석이 불가능합니다. 아이폰 설정 화면에서 권한을 허용해주세요. (아이폰 설정 -> 학습지원앱 -> 위치 -> 앱을 사용하는 동안 체크)", preferredStyle: UIAlertController.Style.alert)
+                    alert.addAction(UIAlertAction(title: "확인", style: UIAlertAction.Style.cancel, handler: nil))
+                    present(alert, animated: true, completion: nil)
+                }
+            //출석체크 버튼 눌렀을 때
+            } else if (schemeStr?.absoluteString == "http://app.poscohrd.com:8000/?ca=chul&chulSign=1#chulStart") {
+                
+                print("checking...")
                
-               //비콘 정보 받아오기
-               let c=getCookieInfo(cookieName: "c")
-               let i=getCookieInfo(cookieName: "i")
-               let selectedCuriNo=getCookieInfo(cookieName: "selectedCuriNo")
-               let selectedChaNo=getCookieInfo(cookieName: "selectedChaNo")
+                //비콘 정보 받아오기
+                let c=getCookieInfo(cookieName: "c")
+                let i=getCookieInfo(cookieName: "i")
+                let selectedCuriNo=getCookieInfo(cookieName: "selectedCuriNo")
+                let selectedChaNo=getCookieInfo(cookieName: "selectedChaNo")
 
-               guard let url = URL(string: "http://app.poscohrd.com:8000/?ca=getBeaconList&c="+c+"&i="+i+"&selectedCuriNo="+selectedCuriNo+"&selectedChaNo="+selectedChaNo) else { return }
-               let task = URLSession.shared.dataTask(with: url) { (data, response, error) in
-               guard let dataResponse = data,
-                         error == nil else {
-                         print(error?.localizedDescription ?? "Response Error")
-                         return }
-                   do {
+                guard let url = URL(string: "http://app.poscohrd.com:8000/?ca=getBeaconList&c="+c+"&i="+i+"&selectedCuriNo="+selectedCuriNo+"&selectedChaNo="+selectedChaNo) else { return }
+                let task = URLSession.shared.dataTask(with: url) { (data, response, error) in guard let dataResponse = data,
+                     error == nil else {
+                     print(error?.localizedDescription ?? "Response Error")
+                     return }
+                    do {
                        let jsonResponse = try JSONSerialization.jsonObject(with: dataResponse, options: []) as? [String: Any]
                        let beaconData=jsonResponse?["beaconInfo"] as! [Any]
                        
@@ -287,9 +300,9 @@ class ViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, CLLo
                        self.startScanning()
                     } catch let parsingError {
                        print("Error", parsingError)
-                  }
-               }
-               task.resume()
+                    }
+                }
+                task.resume()
                 //self.showAlert(vc: self, title: "출석체크 불가", message: "iOS 버전이 낮아 출석체크 기능을 사용할 수 없습니다. OS업데이트를 한 후 시도해 주세요.", actionTitle: "확인", actionStyle: .default)
             }
             decisionHandler(.allow)
